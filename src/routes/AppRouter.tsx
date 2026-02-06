@@ -9,6 +9,7 @@ import Products from "@/pages/products/Products";
 import SearchParts from "@/pages/search/SearchParts";
 import ComingSoon from "@/pages/errors/ComingSoon";
 import ImportExport from "@/pages/import-exports/ImportExport";
+import UsersPage from "@/pages/users/UsersPage"
 
 export const AppRouter = () => {
   return (
@@ -47,7 +48,7 @@ export const AppRouter = () => {
         />
         <Route
           path="users"
-          element={<ComingSoon title="Usuarios" description="Administra usuarios, roles y permisos de tu organización." />}
+          element={<UsersPage />}
         />
         <Route
           path="subscriptions"
