@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   Upload,
   Download,
@@ -25,37 +26,145 @@ import {
   RefreshCw,
   FileUp,
   FileDown,
+  Play,
+  Loader2,
+  AlertCircle,
+  Clock,
+  Check,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+
+// Validation rules for different import types
+interface ValidationRule {
+  field: string;
+  required?: boolean;
+  type?: 'string' | 'number' | 'email';
+  minLength?: number;
+  maxLength?: number;
+  min?: number;
+  max?: number;
+  pattern?: RegExp;
+  message: string;
+}
+
+interface ValidationError {
+  row: number;
+  field: string;
+  value: string;
+  message: string;
+}
 
 interface PreviewData {
   headers: string[];
   rows: Record<string, string>[];
+  allRows: Record<string, string>[];
   fileName: string;
   fileType: 'csv' | 'xlsx';
   totalRows: number;
+  validationErrors: ValidationError[];
+  invalidRowIndices: Set<number>;
 }
 
-interface ImportHistory {
+type FileStatus = 'UPLOADED' | 'UPLOADING' | 'FAILED' | 'PROCESSING' | 'PROCESSED';
+
+interface UploadedFile {
   id: string;
   fileName: string;
+  company: string;
+  totalRecords: number;
+  totalAdded: number;
+  totalModified: number;
+  incrementPercentage: number;
+  processedPercentage: number;
+  status: FileStatus;
   type: 'products' | 'price-list';
-  date: string;
-  status: 'success' | 'partial' | 'error';
-  rowsImported: number;
-  rowsFailed: number;
+  uploadedAt: string;
+  validationErrors: ValidationError[];
+  previewData?: PreviewData;
 }
 
-// Mock import history
-const mockImportHistory: ImportHistory[] = [
-  { id: '1', fileName: 'productos_enero.xlsx', type: 'products', date: '2024-01-15', status: 'success', rowsImported: 1250, rowsFailed: 0 },
-  { id: '2', fileName: 'precios_proveedor_a.csv', type: 'price-list', date: '2024-01-14', status: 'partial', rowsImported: 890, rowsFailed: 12 },
-  { id: '3', fileName: 'catalogo_frenos.xlsx', type: 'products', date: '2024-01-10', status: 'success', rowsImported: 456, rowsFailed: 0 },
-  { id: '4', fileName: 'lista_marzo.csv', type: 'price-list', date: '2024-01-08', status: 'error', rowsImported: 0, rowsFailed: 234 },
+// Validation rules for products
+const productValidationRules: ValidationRule[] = [
+  { field: 'Número de Parte', required: true, minLength: 3, maxLength: 50, message: 'Número de parte es requerido (3-50 caracteres)' },
+  { field: 'Marca', required: true, minLength: 2, message: 'Marca es requerida' },
+  { field: 'Nombre', required: true, minLength: 3, message: 'Nombre es requerido' },
+  { field: 'Precio', required: true, type: 'number', min: 0, message: 'Precio debe ser un número positivo' },
+  { field: 'Stock', type: 'number', min: 0, message: 'Stock debe ser un número positivo' },
+  { field: 'Costo', type: 'number', min: 0, message: 'Costo debe ser un número positivo' },
+];
+
+// Validation rules for price lists
+const priceListValidationRules: ValidationRule[] = [
+  { field: 'Número de Parte', required: true, minLength: 3, message: 'Número de parte es requerido' },
+  { field: 'Precio Base', required: true, type: 'number', min: 0, message: 'Precio base debe ser un número positivo' },
+  { field: 'Descuento', type: 'number', min: 0, max: 100, message: 'Descuento debe estar entre 0 y 100' },
+];
+
+// Mock uploaded files
+const mockUploadedFiles: UploadedFile[] = [
+  { 
+    id: '1', 
+    fileName: 'productos_enero.xlsx', 
+    company: 'Refaccionaria Central',
+    totalRecords: 1250, 
+    totalAdded: 980, 
+    totalModified: 270,
+    incrementPercentage: 12.5,
+    processedPercentage: 100,
+    status: 'PROCESSED', 
+    type: 'products',
+    uploadedAt: '2024-01-15 10:30',
+    validationErrors: []
+  },
+  { 
+    id: '2', 
+    fileName: 'precios_proveedor_a.csv', 
+    company: 'AutoPartes Plus',
+    totalRecords: 890, 
+    totalAdded: 0, 
+    totalModified: 0,
+    incrementPercentage: 0,
+    processedPercentage: 0,
+    status: 'UPLOADED', 
+    type: 'price-list',
+    uploadedAt: '2024-01-14 14:20',
+    validationErrors: []
+  },
+  { 
+    id: '3', 
+    fileName: 'catalogo_frenos.xlsx', 
+    company: 'Refaccionaria Central',
+    totalRecords: 456, 
+    totalAdded: 350, 
+    totalModified: 106,
+    incrementPercentage: 8.3,
+    processedPercentage: 100,
+    status: 'PROCESSED', 
+    type: 'products',
+    uploadedAt: '2024-01-10 09:15',
+    validationErrors: []
+  },
+  { 
+    id: '4', 
+    fileName: 'lista_marzo.csv', 
+    company: 'Distribuidora Norte',
+    totalRecords: 234, 
+    totalAdded: 0, 
+    totalModified: 0,
+    incrementPercentage: 0,
+    processedPercentage: 45,
+    status: 'FAILED', 
+    type: 'price-list',
+    uploadedAt: '2024-01-08 16:45',
+    validationErrors: [
+      { row: 15, field: 'Precio Base', value: 'abc', message: 'Precio base debe ser un número positivo' },
+      { row: 28, field: 'Número de Parte', value: '', message: 'Número de parte es requerido' },
+    ]
+  },
 ];
 
 const ImportExport: React.FC = () => {
-//   const { user, hasPermission } = useAuth();
+  // const { hasPermission } = useAuth();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
@@ -66,13 +175,80 @@ const ImportExport: React.FC = () => {
   
   const [isDragging, setIsDragging] = useState(false);
   const [previewData, setPreviewData] = useState<PreviewData | null>(null);
-  const [isImporting, setIsImporting] = useState(false);
-  const [importProgress, setImportProgress] = useState(0);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-  const [importHistory] = useState<ImportHistory[]>(mockImportHistory);
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>(mockUploadedFiles);
+  const [selectedFileForPreview, setSelectedFileForPreview] = useState<UploadedFile | null>(null);
 
+  // const canImport = hasPermission('canManageProducts');
   const canImport = true;
-  const canExport = true; // All authenticated users can export
+
+  // Validate a single row
+  const validateRow = useCallback((row: Record<string, string>, rules: ValidationRule[], rowIndex: number): ValidationError[] => {
+    const errors: ValidationError[] = [];
+    
+    rules.forEach(rule => {
+      const value = row[rule.field]?.toString().trim() || '';
+      
+      // Required check
+      if (rule.required && !value) {
+        errors.push({ row: rowIndex, field: rule.field, value, message: rule.message });
+        return;
+      }
+      
+      if (!value) return; // Skip further validation if empty and not required
+      
+      // Type check
+      if (rule.type === 'number') {
+        const numValue = parseFloat(value);
+        if (isNaN(numValue)) {
+          errors.push({ row: rowIndex, field: rule.field, value, message: rule.message });
+          return;
+        }
+        if (rule.min !== undefined && numValue < rule.min) {
+          errors.push({ row: rowIndex, field: rule.field, value, message: rule.message });
+          return;
+        }
+        if (rule.max !== undefined && numValue > rule.max) {
+          errors.push({ row: rowIndex, field: rule.field, value, message: rule.message });
+          return;
+        }
+      }
+      
+      // String length checks
+      if (rule.minLength && value.length < rule.minLength) {
+        errors.push({ row: rowIndex, field: rule.field, value, message: rule.message });
+        return;
+      }
+      if (rule.maxLength && value.length > rule.maxLength) {
+        errors.push({ row: rowIndex, field: rule.field, value, message: rule.message });
+        return;
+      }
+      
+      // Pattern check
+      if (rule.pattern && !rule.pattern.test(value)) {
+        errors.push({ row: rowIndex, field: rule.field, value, message: rule.message });
+      }
+    });
+    
+    return errors;
+  }, []);
+
+  // Validate all rows
+  const validateData = useCallback((rows: Record<string, string>[], type: 'products' | 'price-list'): { errors: ValidationError[], invalidRowIndices: Set<number> } => {
+    const rules = type === 'products' ? productValidationRules : priceListValidationRules;
+    const allErrors: ValidationError[] = [];
+    const invalidRowIndices = new Set<number>();
+    
+    rows.forEach((row, index) => {
+      const rowErrors = validateRow(row, rules, index + 1); // 1-indexed for display
+      if (rowErrors.length > 0) {
+        invalidRowIndices.add(index);
+        allErrors.push(...rowErrors);
+      }
+    });
+    
+    return { errors: allErrors, invalidRowIndices };
+  }, [validateRow]);
 
   const parseFile = useCallback(async (file: File) => {
     const fileType = file.name.endsWith('.csv') ? 'csv' : 'xlsx';
@@ -94,21 +270,65 @@ const ImportExport: React.FC = () => {
       }
 
       const headers = jsonData[0] as unknown as string[];
-      const rows = jsonData.slice(1, 11).map((row: unknown) => {
+      const allRows = jsonData.slice(1).map((row: unknown) => {
         const rowData: Record<string, string> = {};
         headers.forEach((header, index) => {
           rowData[header] = String((row as string[])[index] || '');
         });
         return rowData;
-      });
+      }).filter(row => Object.values(row).some(v => v.trim() !== ''));
+
+      // Validate data
+      const { errors, invalidRowIndices } = validateData(allRows, importType);
+
+      const previewRows = allRows.slice(0, 10);
 
       setPreviewData({
         headers,
-        rows,
+        rows: previewRows,
+        allRows,
         fileName: file.name,
         fileType,
-        totalRows: jsonData.length - 1,
+        totalRows: allRows.length,
+        validationErrors: errors,
+        invalidRowIndices,
       });
+
+      // Add to uploaded files list
+      const newFile: UploadedFile = {
+        id: Date.now().toString(),
+        fileName: file.name,
+        company: 'Mi Refaccionaria', // Default company
+        totalRecords: allRows.length,
+        totalAdded: 0,
+        totalModified: 0,
+        incrementPercentage: 0,
+        processedPercentage: 0,
+        status: 'UPLOADED',
+        type: importType,
+        uploadedAt: new Date().toLocaleString('es-MX'),
+        validationErrors: errors,
+        previewData: {
+          headers,
+          rows: previewRows,
+          allRows,
+          fileName: file.name,
+          fileType,
+          totalRows: allRows.length,
+          validationErrors: errors,
+          invalidRowIndices,
+        },
+      };
+
+      setUploadedFiles(prev => [newFile, ...prev]);
+
+      if (errors.length > 0) {
+        toast({
+          title: 'Validación completada',
+          description: `Se encontraron ${errors.length} errores en ${invalidRowIndices.size} filas.`,
+          variant: 'destructive',
+        });
+      }
     } catch (error) {
       toast({
         title: 'Error al leer archivo',
@@ -116,7 +336,7 @@ const ImportExport: React.FC = () => {
         variant: 'destructive',
       });
     }
-  }, [toast]);
+  }, [toast, importType, validateData]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -145,24 +365,77 @@ const ImportExport: React.FC = () => {
     }
   };
 
-  const handleImport = async () => {
-    setShowConfirmDialog(false);
-    setIsImporting(true);
-    setImportProgress(0);
+  const processFile = async (fileId: string) => {
+    const file = uploadedFiles.find(f => f.id === fileId);
+    if (!file) return;
 
-    // Simulate import process
-    for (let i = 0; i <= 100; i += 10) {
-      await new Promise(resolve => setTimeout(resolve, 200));
-      setImportProgress(i);
+    // Check for validation errors
+    if (file.validationErrors.length > 0) {
+      toast({
+        title: 'Error de validación',
+        description: `El archivo tiene ${file.validationErrors.length} errores. Corrígelos antes de procesar.`,
+        variant: 'destructive',
+      });
+      return;
     }
 
-    setIsImporting(false);
-    setPreviewData(null);
-    
+    // Start processing
+    setUploadedFiles(prev => prev.map(f => 
+      f.id === fileId ? { ...f, status: 'PROCESSING' as FileStatus, processedPercentage: 0 } : f
+    ));
+
+    // Simulate processing with progress
+    for (let i = 0; i <= 100; i += 5) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      setUploadedFiles(prev => prev.map(f => 
+        f.id === fileId ? { ...f, processedPercentage: i } : f
+      ));
+    }
+
+    // Complete processing with mock results
+    const totalAdded = Math.floor(file.totalRecords * 0.7);
+    const totalModified = file.totalRecords - totalAdded;
+    const incrementPercentage = Math.round((totalAdded / (file.totalRecords || 1)) * 100 * 10) / 10;
+
+    setUploadedFiles(prev => prev.map(f => 
+      f.id === fileId ? { 
+        ...f, 
+        status: 'PROCESSED' as FileStatus, 
+        processedPercentage: 100,
+        totalAdded,
+        totalModified,
+        incrementPercentage,
+      } : f
+    ));
+
     toast({
-      title: 'Importación completada',
-      description: `Se importaron ${previewData?.totalRows} registros exitosamente.`,
+      title: 'Procesamiento completado',
+      description: `${totalAdded} registros agregados, ${totalModified} modificados.`,
     });
+  };
+
+  const deleteFile = (fileId: string) => {
+    setUploadedFiles(prev => prev.filter(f => f.id !== fileId));
+    if (previewData && uploadedFiles.find(f => f.id === fileId)?.fileName === previewData.fileName) {
+      setPreviewData(null);
+    }
+    toast({
+      title: 'Archivo eliminado',
+      description: 'El archivo ha sido eliminado de la lista.',
+    });
+  };
+
+  const handleImport = async () => {
+    setShowConfirmDialog(false);
+    
+    if (!previewData) return;
+    
+    const file = uploadedFiles.find(f => f.fileName === previewData.fileName && f.status === 'UPLOADED');
+    if (file) {
+      await processFile(file.id);
+    }
+    
+    setPreviewData(null);
   };
 
   const handleExport = async () => {
@@ -203,15 +476,26 @@ const ImportExport: React.FC = () => {
     }
   };
 
-  const getStatusBadge = (status: ImportHistory['status']) => {
+  const getStatusBadge = (status: FileStatus) => {
     switch (status) {
-      case 'success':
-        return <Badge className="bg-success/20 text-success border-success/30"><CheckCircle2 className="w-3 h-3 mr-1" /> Exitoso</Badge>;
-      case 'partial':
-        return <Badge className="bg-warning/20 text-warning border-warning/30"><AlertTriangle className="w-3 h-3 mr-1" /> Parcial</Badge>;
-      case 'error':
-        return <Badge className="bg-destructive/20 text-destructive border-destructive/30"><XCircle className="w-3 h-3 mr-1" /> Error</Badge>;
+      case 'UPLOADED':
+        return <Badge className="bg-info/20 text-info border-info/30 gap-1"><Clock className="w-3 h-3" /> Subido</Badge>;
+      case 'UPLOADING':
+        return <Badge className="bg-warning/20 text-warning border-warning/30 gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Subiendo</Badge>;
+      case 'PROCESSING':
+        return <Badge className="bg-primary/20 text-primary border-primary/30 gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Procesando</Badge>;
+      case 'PROCESSED':
+        return <Badge className="bg-success/20 text-success border-success/30 gap-1"><CheckCircle2 className="w-3 h-3" /> Procesado</Badge>;
+      case 'FAILED':
+        return <Badge className="bg-destructive/20 text-destructive border-destructive/30 gap-1"><XCircle className="w-3 h-3" /> Fallido</Badge>;
     }
+  };
+
+  const canProcess = (status: FileStatus) => status === 'UPLOADED' || status === 'FAILED';
+  const canDelete = (status: FileStatus) => status === 'UPLOADED' || status === 'FAILED' || status === 'PROCESSED';
+
+  const getErrorsForCell = (rowIndex: number, field: string): ValidationError | undefined => {
+    return previewData?.validationErrors.find(e => e.row === rowIndex + 1 && e.field === field);
   };
 
   return (
@@ -353,10 +637,52 @@ const ImportExport: React.FC = () => {
                             </p>
                           </div>
                         </div>
-                        <Button variant="ghost" size="icon" onClick={clearPreview}>
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          {previewData.validationErrors.length > 0 && (
+                            <Badge className="bg-destructive/20 text-destructive border-destructive/30 gap-1">
+                              <AlertCircle className="w-3 h-3" />
+                              {previewData.validationErrors.length} errores
+                            </Badge>
+                          )}
+                          {previewData.validationErrors.length === 0 && (
+                            <Badge className="bg-success/20 text-success border-success/30 gap-1">
+                              <Check className="w-3 h-3" />
+                              Válido
+                            </Badge>
+                          )}
+                          <Button variant="ghost" size="icon" onClick={clearPreview}>
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
                       </div>
+
+                      {/* Validation Errors Summary */}
+                      {previewData.validationErrors.length > 0 && (
+                        <div className="p-4 bg-destructive/10 border border-destructive/30 rounded-xl">
+                          <div className="flex items-start gap-3">
+                            <AlertTriangle className="w-5 h-5 text-destructive shrink-0 mt-0.5" />
+                            <div className="flex-1">
+                              <p className="font-medium text-destructive">Errores de validación</p>
+                              <p className="text-sm text-muted-foreground mt-1">
+                                Se encontraron {previewData.validationErrors.length} errores en {previewData.invalidRowIndices.size} filas. 
+                                Las filas con errores están resaltadas en rojo.
+                              </p>
+                              <div className="mt-3 max-h-32 overflow-y-auto space-y-1">
+                                {previewData.validationErrors.slice(0, 10).map((error, idx) => (
+                                  <p key={idx} className="text-sm text-destructive">
+                                    • Fila {error.row}: {error.field} - {error.message}
+                                  </p>
+                                ))}
+                                {previewData.validationErrors.length > 10 && (
+                                  <p className="text-sm text-muted-foreground">
+                                    ... y {previewData.validationErrors.length - 10} errores más
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
 
                       {/* Preview Table */}
                       <div>
@@ -366,28 +692,60 @@ const ImportExport: React.FC = () => {
                         </div>
                         <div className="border rounded-xl overflow-hidden">
                           <div className="overflow-x-auto">
-                            <Table>
-                              <TableHeader>
-                                <TableRow>
-                                  {previewData.headers.map((header, index) => (
-                                    <TableHead key={index} className="whitespace-nowrap">
-                                      {header}
-                                    </TableHead>
-                                  ))}
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {previewData.rows.map((row, rowIndex) => (
-                                  <TableRow key={rowIndex}>
-                                    {previewData.headers.map((header, cellIndex) => (
-                                      <TableCell key={cellIndex} className="whitespace-nowrap">
-                                        {row[header] || '-'}
-                                      </TableCell>
+                            <TooltipProvider>
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    <TableHead className="w-12 text-center">#</TableHead>
+                                    {previewData.headers.map((header, index) => (
+                                      <TableHead key={index} className="whitespace-nowrap">
+                                        {header}
+                                      </TableHead>
                                     ))}
                                   </TableRow>
-                                ))}
-                              </TableBody>
-                            </Table>
+                                </TableHeader>
+                                <TableBody>
+                                  {previewData.rows.map((row, rowIndex) => {
+                                    const hasError = previewData.invalidRowIndices.has(rowIndex);
+                                    return (
+                                      <TableRow 
+                                        key={rowIndex}
+                                        className={hasError ? 'bg-destructive/10 hover:bg-destructive/20' : ''}
+                                      >
+                                        <TableCell className="text-center text-muted-foreground">
+                                          {rowIndex + 1}
+                                        </TableCell>
+                                        {previewData.headers.map((header, cellIndex) => {
+                                          const error = getErrorsForCell(rowIndex, header);
+                                          return (
+                                            <TableCell 
+                                              key={cellIndex} 
+                                              className={`whitespace-nowrap ${error ? 'bg-destructive/20 text-destructive font-medium' : ''}`}
+                                            >
+                                              {error ? (
+                                                <Tooltip>
+                                                  <TooltipTrigger asChild>
+                                                    <span className="flex items-center gap-1 cursor-help">
+                                                      <AlertCircle className="w-3 h-3" />
+                                                      {row[header] || '(vacío)'}
+                                                    </span>
+                                                  </TooltipTrigger>
+                                                  <TooltipContent className="bg-destructive text-destructive-foreground">
+                                                    {error.message}
+                                                  </TooltipContent>
+                                                </Tooltip>
+                                              ) : (
+                                                row[header] || '-'
+                                              )}
+                                            </TableCell>
+                                          );
+                                        })}
+                                      </TableRow>
+                                    );
+                                  })}
+                                </TableBody>
+                              </Table>
+                            </TooltipProvider>
                           </div>
                         </div>
                       </div>
@@ -397,107 +755,204 @@ const ImportExport: React.FC = () => {
                         <Button variant="outline" onClick={clearPreview}>
                           Cancelar
                         </Button>
-                        <Button onClick={() => setShowConfirmDialog(true)} className="gap-2">
+                        <Button 
+                          onClick={() => setShowConfirmDialog(true)} 
+                          className="gap-2"
+                          disabled={previewData.validationErrors.length > 0}
+                        >
                           <ArrowRight className="w-4 h-4" />
                           Importar {previewData.totalRows.toLocaleString()} registros
                         </Button>
                       </div>
                     </div>
                   )}
-
-                  {/* Import Progress */}
-                  {isImporting && (
-                    <div className="mt-6 space-y-3">
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="flex items-center gap-2">
-                          <RefreshCw className="w-4 h-4 animate-spin" />
-                          Importando datos...
-                        </span>
-                        <span>{importProgress}%</span>
-                      </div>
-                      <Progress value={importProgress} className="h-2" />
-                    </div>
-                  )}
                 </CardContent>
               </Card>
 
-              {/* Import History */}
+              {/* Uploaded Files Table */}
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-lg">Historial de importaciones</CardTitle>
-                  <CardDescription>Últimas importaciones realizadas</CardDescription>
+                  <CardTitle className="text-lg">Archivos subidos</CardTitle>
+                  <CardDescription>Lista de archivos cargados y su estado de procesamiento</CardDescription>
                 </CardHeader>
                 <CardContent>
                   {/* Desktop Table */}
-                  <div className="hidden md:block">
+                  <div className="hidden lg:block">
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>Archivo</TableHead>
-                          <TableHead>Tipo</TableHead>
-                          <TableHead>Fecha</TableHead>
-                          <TableHead>Estado</TableHead>
-                          <TableHead className="text-right">Registros</TableHead>
+                          <TableHead>Nombre del Archivo</TableHead>
+                          <TableHead>Compañía</TableHead>
+                          <TableHead className="text-right">Total Registros</TableHead>
+                          <TableHead className="text-right">Agregados</TableHead>
+                          <TableHead className="text-right">Modificados</TableHead>
+                          <TableHead className="text-right">% Incremento</TableHead>
+                          <TableHead className="w-32">% Procesado</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead className="text-right">Acciones</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {importHistory.map((item) => (
-                          <TableRow key={item.id}>
+                        {uploadedFiles.map((file) => (
+                          <TableRow key={file.id}>
                             <TableCell className="font-medium">
                               <div className="flex items-center gap-2">
-                                {item.fileName.endsWith('.xlsx') ? (
+                                {file.fileName.endsWith('.xlsx') || file.fileName.endsWith('.xls') ? (
                                   <FileSpreadsheet className="w-4 h-4 text-success" />
                                 ) : (
                                   <FileText className="w-4 h-4 text-info" />
                                 )}
-                                {item.fileName}
+                                <span className="truncate max-w-[150px]">{file.fileName}</span>
                               </div>
                             </TableCell>
-                            <TableCell>
-                              <Badge variant="outline">
-                                {item.type === 'products' ? 'Productos' : 'Lista de Precios'}
-                              </Badge>
-                            </TableCell>
-                            <TableCell>{item.date}</TableCell>
-                            <TableCell>{getStatusBadge(item.status)}</TableCell>
+                            <TableCell>{file.company}</TableCell>
+                            <TableCell className="text-right">{file.totalRecords.toLocaleString()}</TableCell>
+                            <TableCell className="text-right text-success">{file.totalAdded.toLocaleString()}</TableCell>
+                            <TableCell className="text-right text-info">{file.totalModified.toLocaleString()}</TableCell>
                             <TableCell className="text-right">
-                              <span className="text-success">{item.rowsImported.toLocaleString()}</span>
-                              {item.rowsFailed > 0 && (
-                                <span className="text-destructive"> / {item.rowsFailed}</span>
+                              {file.incrementPercentage > 0 ? (
+                                <span className="text-success">+{file.incrementPercentage}%</span>
+                              ) : (
+                                <span className="text-muted-foreground">-</span>
                               )}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                <Progress value={file.processedPercentage} className="h-2 flex-1" />
+                                <span className="text-xs text-muted-foreground w-10 text-right">
+                                  {file.status === 'PROCESSING' && (
+                                    <span className="flex items-center gap-1">
+                                      <RefreshCw className="w-3 h-3 animate-spin" />
+                                      {file.processedPercentage}%
+                                    </span>
+                                  )}
+                                  {file.status !== 'PROCESSING' && `${file.processedPercentage}%`}
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell>{getStatusBadge(file.status)}</TableCell>
+                            <TableCell>
+                              <div className="flex items-center justify-end gap-1">
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8"
+                                        disabled={!canProcess(file.status)}
+                                        onClick={() => processFile(file.id)}
+                                      >
+                                        <Play className={`w-4 h-4 ${canProcess(file.status) ? 'text-success' : 'text-muted-foreground'}`} />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Procesar archivo</TooltipContent>
+                                  </Tooltip>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8"
+                                        disabled={!canDelete(file.status)}
+                                        onClick={() => deleteFile(file.id)}
+                                      >
+                                        <Trash2 className={`w-4 h-4 ${canDelete(file.status) ? 'text-destructive' : 'text-muted-foreground'}`} />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Eliminar archivo</TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              </div>
                             </TableCell>
                           </TableRow>
                         ))}
+                        {uploadedFiles.length === 0 && (
+                          <TableRow>
+                            <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                              No hay archivos subidos
+                            </TableCell>
+                          </TableRow>
+                        )}
                       </TableBody>
                     </Table>
                   </div>
 
                   {/* Mobile Cards */}
-                  <div className="md:hidden space-y-3">
-                    {importHistory.map((item) => (
-                      <div key={item.id} className="p-4 border rounded-xl space-y-3">
+                  <div className="lg:hidden space-y-3">
+                    {uploadedFiles.map((file) => (
+                      <div key={file.id} className="p-4 border rounded-xl space-y-3">
                         <div className="flex items-start justify-between">
                           <div className="flex items-center gap-2">
-                            {item.fileName.endsWith('.xlsx') ? (
+                            {file.fileName.endsWith('.xlsx') || file.fileName.endsWith('.xls') ? (
                               <FileSpreadsheet className="w-5 h-5 text-success" />
                             ) : (
                               <FileText className="w-5 h-5 text-info" />
                             )}
-                            <span className="font-medium text-sm">{item.fileName}</span>
+                            <div>
+                              <span className="font-medium text-sm block">{file.fileName}</span>
+                              <span className="text-xs text-muted-foreground">{file.company}</span>
+                            </div>
                           </div>
-                          {getStatusBadge(item.status)}
+                          {getStatusBadge(file.status)}
                         </div>
-                        <div className="flex items-center justify-between text-sm text-muted-foreground">
-                          <span>{item.date}</span>
-                          <span>
-                            <span className="text-success">{item.rowsImported.toLocaleString()}</span>
-                            {item.rowsFailed > 0 && (
-                              <span className="text-destructive"> / {item.rowsFailed} errores</span>
-                            )}
-                          </span>
+                        
+                        <div className="grid grid-cols-3 gap-2 text-sm">
+                          <div>
+                            <p className="text-muted-foreground text-xs">Registros</p>
+                            <p className="font-medium">{file.totalRecords.toLocaleString()}</p>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground text-xs">Agregados</p>
+                            <p className="font-medium text-success">{file.totalAdded.toLocaleString()}</p>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground text-xs">Modificados</p>
+                            <p className="font-medium text-info">{file.totalModified.toLocaleString()}</p>
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="flex items-center justify-between text-xs mb-1">
+                            <span className="text-muted-foreground">Progreso</span>
+                            <span className="flex items-center gap-1">
+                              {file.status === 'PROCESSING' && (
+                                <RefreshCw className="w-3 h-3 animate-spin" />
+                              )}
+                              {file.processedPercentage}%
+                            </span>
+                          </div>
+                          <Progress value={file.processedPercentage} className="h-2" />
+                        </div>
+
+                        <div className="flex gap-2 pt-2 border-t">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="flex-1 gap-1"
+                            disabled={!canProcess(file.status)}
+                            onClick={() => processFile(file.id)}
+                          >
+                            <Play className="w-3 h-3" />
+                            Procesar
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-1"
+                            disabled={!canDelete(file.status)}
+                            onClick={() => deleteFile(file.id)}
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
                         </div>
                       </div>
                     ))}
+                    {uploadedFiles.length === 0 && (
+                      <div className="text-center py-8 text-muted-foreground">
+                        No hay archivos subidos
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -546,7 +1001,7 @@ const ImportExport: React.FC = () => {
                 </div>
                 <div className="p-3 bg-muted rounded-lg text-sm text-muted-foreground">
                   {/* <p>Incluye: Número de parte, marca, línea, stock, precio{hasPermission('canViewCosts') && ', costo'}</p> */}
-                  <p>Incluye: Número de parte, marca, línea, stock, precio{true && ', costo'}</p>
+                  <p>Incluye: Número de parte, marca, línea, stock, precio</p>
                 </div>
                 <Button 
                   className="w-full gap-2" 
@@ -677,6 +1132,45 @@ const ImportExport: React.FC = () => {
             </Button>
             <Button onClick={handleImport}>
               Confirmar importación
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* File Preview Dialog */}
+      <Dialog open={!!selectedFileForPreview} onOpenChange={() => setSelectedFileForPreview(null)}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Vista previa: {selectedFileForPreview?.fileName}</DialogTitle>
+            <DialogDescription>
+              {selectedFileForPreview?.totalRecords.toLocaleString()} registros en el archivo
+            </DialogDescription>
+          </DialogHeader>
+          {selectedFileForPreview?.previewData && (
+            <div className="max-h-96 overflow-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    {selectedFileForPreview.previewData.headers.map((header, idx) => (
+                      <TableHead key={idx}>{header}</TableHead>
+                    ))}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {selectedFileForPreview.previewData.rows.map((row, rowIdx) => (
+                    <TableRow key={rowIdx}>
+                      {selectedFileForPreview.previewData!.headers.map((header, cellIdx) => (
+                        <TableCell key={cellIdx}>{row[header] || '-'}</TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSelectedFileForPreview(null)}>
+              Cerrar
             </Button>
           </DialogFooter>
         </DialogContent>
