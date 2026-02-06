@@ -39,7 +39,7 @@ export const fetchMe = createAsyncThunk(
   "auth/me",
   async (_, { rejectWithValue }) => {
     try {
-      const { data } = await authService.me();
+      const data = await authService.me();
       return data;
     } catch (error) {
       return rejectWithValue(null);
