@@ -143,10 +143,10 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, isSidebarCollapsed }) => {
               className="flex items-center gap-3 p-2 pr-4 rounded-xl hover:bg-muted transition-colors"
             >
               <div className="w-9 h-9 rounded-xl bg-gradient-primary flex items-center justify-center text-primary-foreground font-semibold">
-                {user?.first_name.charAt(0)}
+                {user?.firstName.charAt(0)}
               </div>
               <div className="hidden md:block text-left">
-                <p className="text-sm font-medium">{user?.first_name}</p>
+                <p className="text-sm font-medium">{user?.firstName}</p>
                 <p className="text-xs text-muted-foreground">{user?.email}</p>
               </div>
               <ChevronDown className="w-4 h-4 text-muted-foreground hidden md:block" />

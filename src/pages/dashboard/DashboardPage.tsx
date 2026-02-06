@@ -13,7 +13,7 @@ const DashboardPage: React.FC = () => {
     <div className="space-y-6">
       <div className="animate-fade-up">
         <h1 className="text-3xl font-bold">
-          Bienvenido, <span className="text-gradient">{user?.first_name}</span>
+          Bienvenido, <span className="text-gradient">{user?.fullName}</span>
         </h1>
         <p className="text-muted-foreground mt-1">
           Aquí está el resumen de tu negocio hoy.

@@ -55,12 +55,18 @@ const Sidebar: React.FC<SidebarProps> = ({ isCollapsed, onToggle }) => {
   );
 
   const getRoleBadge = () => {
-    switch (user?.role) {
-      case 'super_admin':
+    switch (user?.roles[0].name) {
+      case 'super-admin':
         return { label: 'Super Admin', color: 'bg-gradient-primary' };
-      case 'refaccionaria_admin':
+      case 'admin':
         return { label: 'Admin', color: 'bg-success' };
-      case 'refaccionaria_user':
+      case 'manager':
+        return { label: 'Gerente', color: 'bg-gradient-secondary' };
+      case 'support':
+        return { label: 'Soporte', color: 'bg-warning' };
+      case 'supervisor':
+        return { label: 'Supervisor', color: 'bg-gradient-secondary' };
+      case 'user':
         return { label: 'Usuario', color: 'bg-info' };
       default:
         return { label: 'Usuario', color: 'bg-muted' };
@@ -100,10 +106,10 @@ const Sidebar: React.FC<SidebarProps> = ({ isCollapsed, onToggle }) => {
           <div className="p-4 border-b border-sidebar-border">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-gradient-primary flex items-center justify-center text-primary-foreground font-semibold">
-                {user.first_name.charAt(0)}
+                {user.firstName.charAt(0)}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-sidebar-foreground truncate">{user.first_name}</p>
+                <p className="text-sm font-medium text-sidebar-foreground truncate">{user.firstName}</p>
                 <p className="text-xs text-sidebar-foreground/60 truncate">{user.email}</p>
               </div>
             </div>
@@ -111,9 +117,9 @@ const Sidebar: React.FC<SidebarProps> = ({ isCollapsed, onToggle }) => {
               <span className={cn('text-xs font-medium px-2 py-1 rounded-full text-white', roleBadge.color)}>
                 {roleBadge.label}
               </span>
-              {user.refaccionariaName && (
+              {user.company?.name && (
                 <p className="text-xs text-sidebar-foreground/60 mt-2 truncate">
-                  {user.refaccionariaName}
+                  {user.company?.name}
                 </p>
               )}
             </div>
